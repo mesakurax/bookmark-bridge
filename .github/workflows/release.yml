@@ -1,0 +1,60 @@
+name: test-and-release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Syntax check
+        run: npm run check
+      - name: Tests
+        run: npm test
+      - name: Chinese help smoke test
+        shell: pwsh
+        run: |
+          $help = & .\bookmark-bridge.cmd -h
+          if (($help -join "`n") -notlike '*三个单项命令*' -and ($help -join "`n") -notlike '*收藏夹、密码和浏览记录*') {
+            throw 'Help smoke test failed.'
+          }
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build Windows ZIP
+        shell: pwsh
+        run: |
+          $name = "bookmark-bridge-$env:GITHUB_REF_NAME-windows"
+          $stage = Join-Path $PWD "dist\$name"
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+          $files = @(
+            'bookmark-sync.js', 'history-sync.js', 'password-migrate.js',
+            'bookmark-bridge.cmd', 'bookmark-sync.cmd',
+            'install.ps1', 'uninstall.ps1', 'README.md', 'LICENSE'
+          )
+          Copy-Item -LiteralPath $files -Destination $stage
+          Compress-Archive -Path "$stage\*" -DestinationPath "dist\$name.zip" -CompressionLevel Optimal
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $zip = Get-ChildItem -LiteralPath dist -Filter 'bookmark-bridge-*.zip' | Select-Object -First 1
+          gh release create $env:GITHUB_REF_NAME $zip.FullName --generate-notes --title "Bookmark Bridge $env:GITHUB_REF_NAME"
