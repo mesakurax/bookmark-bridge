@@ -2,7 +2,8 @@
 param(
     [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'Programs\BookmarkBridge'),
     [string]$BinDir = (Join-Path $env:USERPROFILE '.local\bin'),
-    [switch]$SkipPathUpdate
+    [switch]$SkipPathUpdate,
+    [switch]$SkipBrowserRegistration
 )
 
 $ErrorActionPreference = 'Stop'
@@ -25,9 +26,11 @@ if ($nodeVersion -lt [version]'22.12.0') {
 $sourceDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $files = @(
     'bookmark-bridge.js',
+    'bookmark-api-sync.js',
     'history-sync.js',
     'password-migrate.js',
     'bookmark-bridge.cmd',
+    'native-host.cs',
     'README.md',
     'LICENSE',
     'uninstall.ps1'
@@ -37,11 +40,60 @@ foreach ($file in $files) {
         throw "安装包缺少文件：$file"
     }
 }
+if (-not (Test-Path -LiteralPath (Join-Path $sourceDir 'extension\manifest.json'))) {
+    throw '安装包缺少浏览器扩展目录。'
+}
 
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
 foreach ($file in $files) {
     Copy-Item -LiteralPath (Join-Path $sourceDir $file) -Destination (Join-Path $InstallDir $file) -Force
+}
+$extensionTarget = Join-Path $InstallDir 'extension'
+New-Item -ItemType Directory -Path $extensionTarget -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $sourceDir 'extension\manifest.json') -Destination $extensionTarget -Force
+Copy-Item -LiteralPath (Join-Path $sourceDir 'extension\content.js') -Destination $extensionTarget -Force
+Copy-Item -LiteralPath (Join-Path $sourceDir 'extension\worker.js') -Destination $extensionTarget -Force
+
+# Build and register the small native-messaging host used to authenticate local
+# bookmark jobs. It never reads passwords or browser history.
+$frameworkRoot = if ([Environment]::Is64BitOperatingSystem) {
+    'C:\Windows\Microsoft.NET\Framework64\v4.0.30319'
+} else {
+    'C:\Windows\Microsoft.NET\Framework\v4.0.30319'
+}
+$compiler = Join-Path $frameworkRoot 'csc.exe'
+$webExtensions = Join-Path $frameworkRoot 'System.Web.Extensions.dll'
+if (-not (Test-Path -LiteralPath $compiler) -or -not (Test-Path -LiteralPath $webExtensions)) {
+    throw '未找到 Windows .NET Framework C# 编译器，无法安装浏览器通信组件。'
+}
+$hostExe = Join-Path $InstallDir 'bookmark-bridge-host.exe'
+& $compiler /nologo /target:exe "/out:$hostExe" "/reference:$webExtensions" (Join-Path $InstallDir 'native-host.cs')
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $hostExe)) {
+    throw '编译 Bookmark Bridge 浏览器通信组件失败。'
+}
+
+$hostManifestPath = Join-Path $InstallDir 'native-host.json'
+$hostManifest = [ordered]@{
+    name = 'com.mesakurax.bookmark_bridge'
+    description = 'Bookmark Bridge local native messaging host'
+    path = $hostExe
+    type = 'stdio'
+    allowed_origins = @('chrome-extension://faaofhehocblpehenggfdmpbpjnifpim/')
+}
+[IO.File]::WriteAllText(
+    $hostManifestPath,
+    (($hostManifest | ConvertTo-Json -Depth 4) + "`n"),
+    [Text.UTF8Encoding]::new($false)
+)
+if (-not $SkipBrowserRegistration) {
+    foreach ($registryPath in @(
+        'HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.mesakurax.bookmark_bridge',
+        'HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\com.mesakurax.bookmark_bridge'
+    )) {
+        New-Item -Path $registryPath -Force | Out-Null
+        Set-Item -Path $registryPath -Value $hostManifestPath
+    }
 }
 
 $entry = Join-Path $InstallDir 'bookmark-bridge.js'
@@ -77,4 +129,4 @@ if (-not $SkipPathUpdate) {
 Write-Host ''
 Write-Host "Bookmark Bridge 已安装到：$InstallDir" -ForegroundColor Green
 Write-Host "命令入口：$BinDir\bookmark-bridge.cmd"
-Write-Host '请打开新的 PowerShell，然后运行：bookmark-bridge -h'
+Write-Host '首次安装请运行：bookmark-bridge setup'

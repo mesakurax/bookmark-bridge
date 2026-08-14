@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Bookmark Bridge",
+  "version": "2.2.1",
+  "description": "通过浏览器原生 API 在 Chrome 与 Edge 之间同步收藏夹",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtLs/PP4Bo5WzANqxFkdBuwXEXVpLMHlz9h3CK4PiVSoK0+YTmw7WAZ7m5mZQOGzS1HQK+E2aCvVJgUjLYAHBCL5n4DG1e7mynycMoKZyVW3EVKX+leFrjZKKe2q+2g29S28zuwDOcjz8pQCJ+VNmMjFziry3vsxe2bfhcwWa1l6C3nld/ocYActakYHqC+VWahkR0UENh4Uc5Nli1CLQEhL9fKEnI3lEvHwihUdEUF+OePWFROprCfG9x3IwLRrnZKZ8VCqAf4OBOHVF7HQbyT2v9Ulhwk2BM0LLckqv7vsqISBAcM/Tw0ggXmGDWOVR/XAm6s/T2yvcYTjVqOdGgwIDAQAB",
+  "permissions": [
+    "bookmarks",
+    "nativeMessaging",
+    "tabs"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://127.0.0.1/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

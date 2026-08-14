@@ -6,7 +6,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const test = require("node:test");
 
-const { parseArgs } = require("./bookmark-bridge");
+const { bookmarkApiReconciliation, parseArgs } = require("./bookmark-bridge");
 
 const expectedCommands = [
   ["bookmarks-to-chrome", "bookmarks", "edge", "chrome"],
@@ -62,4 +62,13 @@ test("旧命令和重启参数不再兼容", () => {
   ], { encoding: "utf8" });
   assert.notEqual(oldFlag.status, 0);
   assert.match(oldFlag.stderr, /未知选项/);
+});
+
+test("浏览器 API 精确落地已计算的合并结果", () => {
+  const rawSource = { roots: { marker: "raw source" } };
+  const calculatedOutput = { roots: { marker: "calculated merge result" } };
+  const reconciliation = bookmarkApiReconciliation({ output: calculatedOutput, rawSource });
+  assert.equal(reconciliation.desiredDocument, calculatedOutput);
+  assert.notEqual(reconciliation.desiredDocument, rawSource);
+  assert.equal(reconciliation.mode, "mirror");
 });

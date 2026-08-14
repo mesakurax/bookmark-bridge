@@ -1,6 +1,6 @@
 {
   "name": "bookmark-bridge",
-  "version": "2.1.0",
+  "version": "2.2.1",
   "description": "在 Windows 上手动桥接 Chrome 与 Edge 的收藏夹、密码和浏览记录",
   "license": "MIT",
   "private": true,
@@ -8,7 +8,7 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "check": "node --no-warnings --check bookmark-bridge.js && node --no-warnings --check history-sync.js && node --no-warnings --check password-migrate.js",
+    "check": "node --no-warnings --check bookmark-bridge.js && node --no-warnings --check bookmark-api-sync.js && node --no-warnings --check history-sync.js && node --no-warnings --check password-migrate.js",
     "test": "node --no-warnings --test *.test.js"
   }
 }

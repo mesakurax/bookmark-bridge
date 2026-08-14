@@ -8,6 +8,15 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+foreach ($registryPath in @(
+    'HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.mesakurax.bookmark_bridge',
+    'HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\com.mesakurax.bookmark_bridge'
+)) {
+    if (Test-Path -LiteralPath $registryPath) {
+        Remove-Item -LiteralPath $registryPath -Recurse -Force
+    }
+}
+
 foreach ($name in @('bookmark-bridge.cmd', 'bookmark-sync.cmd')) {
     $shim = Join-Path $BinDir $name
     if (Test-Path -LiteralPath $shim) {

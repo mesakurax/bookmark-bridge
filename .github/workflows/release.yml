@@ -29,6 +29,17 @@ jobs:
           if (($help -join "`n") -notlike '*三个单项命令*' -and ($help -join "`n") -notlike '*收藏夹、密码和浏览记录*') {
             throw 'Help smoke test failed.'
           }
+      - name: Installer smoke test
+        shell: pwsh
+        run: |
+          $app = Join-Path $env:RUNNER_TEMP 'bookmark-bridge-app'
+          $bin = Join-Path $env:RUNNER_TEMP 'bookmark-bridge-bin'
+          & .\install.ps1 -InstallDir $app -BinDir $bin -SkipPathUpdate -SkipBrowserRegistration
+          $version = & (Join-Path $bin 'bookmark-bridge.cmd') --version
+          $expected = (Get-Content -LiteralPath .\package.json -Raw | ConvertFrom-Json).version
+          if (($version -join "`n") -notlike "*$expected*") {
+            throw 'Installer smoke test failed.'
+          }
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -45,11 +56,12 @@ jobs:
           $stage = Join-Path $PWD "dist\$name"
           New-Item -ItemType Directory -Path $stage -Force | Out-Null
           $files = @(
-            'bookmark-bridge.js', 'history-sync.js', 'password-migrate.js',
+            'bookmark-bridge.js', 'bookmark-api-sync.js', 'history-sync.js', 'password-migrate.js',
             'bookmark-bridge.cmd',
-            'install.ps1', 'uninstall.ps1', 'README.md', 'LICENSE'
+            'native-host.cs', 'install.ps1', 'uninstall.ps1', 'README.md', 'LICENSE'
           )
           Copy-Item -LiteralPath $files -Destination $stage
+          Copy-Item -LiteralPath 'extension' -Destination $stage -Recurse
           Compress-Archive -Path "$stage\*" -DestinationPath "dist\$name.zip" -CompressionLevel Optimal
       - name: Create GitHub Release
         shell: pwsh

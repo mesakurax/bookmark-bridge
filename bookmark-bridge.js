@@ -6,11 +6,12 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { execFileSync, spawn } = require("child_process");
+const { EXTENSION_ID, createBookmarkApiSession, extensionDirectory } = require("./bookmark-api-sync");
 const { executeHistorySync } = require("./history-sync");
 const { migratePasswords } = require("./password-migrate");
 
 const APP_NAME = "Bookmark Bridge";
-const VERSION = "2.1.0";
+const VERSION = "2.2.1";
 const MANAGED_ROOTS = ["bookmark_bar", "other", "synced"];
 const COMMANDS = new Map([
   ["bookmarks-to-chrome", { action: "bookmarks", sourceBrowser: "edge", targetBrowser: "chrome" }],
@@ -51,6 +52,7 @@ function usage() {
 
 辅助命令：
   status              查看数据文件、项目数量、运行状态和历史基线
+  setup               打开 Chrome/Edge 扩展页面，完成一次性 API 组件安装
 
 选项：
   -h, --help          显示中文帮助。
@@ -73,6 +75,9 @@ function usage() {
 常用示例：
   bookmark-bridge status
       查看当前状态。
+
+  bookmark-bridge setup
+      首次使用时安装浏览器 API 组件。
 
   bookmark-bridge bookmarks-to-chrome --dry-run
       预览收藏夹 Edge -> Chrome。
@@ -491,6 +496,17 @@ function countDocument(document) {
   return result;
 }
 
+function bookmarkApiReconciliation(syncResult) {
+  if (!syncResult?.output?.roots) throw new Error("缺少收藏夹合并结果。");
+  return {
+    desiredDocument: syncResult.output,
+    // The output already includes target-only nodes when the user selected
+    // merge. Mirroring here only removes stale live nodes that are not in the
+    // calculated output; it does not change the user's chosen merge semantics.
+    mode: "mirror",
+  };
+}
+
 function runningBrowsers() {
   if (process.platform !== "win32") return [];
   let output = "";
@@ -598,6 +614,23 @@ function reopenBrowser(browser, executable) {
   info(`Reopened ${capitalize(browser)}.`);
 }
 
+function launchBrowserForBookmarkApi(browser, executable, profile, triggerUrl, restoreSession) {
+  if (!executable) throw new Error(`找不到 ${capitalize(browser)} 可执行文件。`);
+  const args = [
+    `--profile-directory=${profile}`,
+    triggerUrl,
+  ];
+  if (restoreSession) args.push("--restore-last-session");
+  else args.push("--start-minimized", "about:blank");
+  const child = spawn(executable, args, {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  child.unref();
+  info(`已启动 ${capitalize(browser)} 的 Bookmark Bridge 页面。`);
+}
+
 function timestamp() {
   return new Date().toISOString().replace(/[:.]/g, "-");
 }
@@ -644,6 +677,70 @@ function showDefinition(definition, document) {
   info(`  Items: ${counts.urls} URLs, ${counts.folders} folders`);
 }
 
+function extensionInstallState(browser, profile) {
+  const definition = browserProfileDefinition(browser, profile);
+  for (const name of ["Preferences", "Secure Preferences"]) {
+    const file = path.join(definition.profileDir, name);
+    if (!fs.existsSync(file)) continue;
+    try {
+      const preferences = JSON.parse(fs.readFileSync(file, "utf8"));
+      const setting = preferences.extensions?.settings?.[EXTENSION_ID];
+      if (setting) {
+        return {
+          installed: true,
+          enabled: setting.state === 1 || setting.state === undefined,
+          location: setting.location,
+        };
+      }
+    } catch (_) {
+      // A browser may be replacing Preferences while status is reading it.
+    }
+  }
+  return { installed: false, enabled: false, location: null };
+}
+
+function extensionStateText(browser, profile) {
+  const state = extensionInstallState(browser, profile);
+  if (!state.installed) return "未安装";
+  return state.enabled ? "已安装" : "已安装但未启用";
+}
+
+function openBrowserPage(browser, profile, url) {
+  const state = browserProcessState(browser);
+  const executable = browserExecutable(browser, state);
+  if (!executable) throw new Error(`找不到 ${capitalize(browser)} 可执行文件。`);
+  const child = spawn(executable, [`--profile-directory=${profile}`, url], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  child.unref();
+}
+
+function setupExtension(options) {
+  const directory = extensionDirectory();
+  if (!fs.existsSync(path.join(directory, "manifest.json"))) {
+    throw new Error(`安装目录中缺少浏览器扩展：${directory}`);
+  }
+  info("Bookmark Bridge 浏览器 API 组件（一次性设置）");
+  info(`  扩展目录：${directory}`);
+  info(`  固定扩展 ID：${EXTENSION_ID}`);
+  info("");
+  info("请在两个已打开的扩展页面中分别完成：");
+  info("  1. 打开右上角“开发者模式”；");
+  info("  2. 点击“加载已解压的扩展程序”；");
+  info("  3. 选择上面的 extension 目录；");
+  info("  4. 确认扩展名称为 Bookmark Bridge。\n");
+
+  openBrowserPage("chrome", options.chromeProfile, "chrome://extensions");
+  openBrowserPage("edge", options.edgeProfile, "edge://extensions");
+  const explorer = spawn("explorer.exe", [directory], { detached: true, stdio: "ignore", windowsHide: false });
+  explorer.unref();
+  info(`Chrome：${extensionStateText("chrome", options.chromeProfile)}`);
+  info(`Edge：  ${extensionStateText("edge", options.edgeProfile)}`);
+  info("安装后运行 bookmark-bridge status 检查状态。");
+}
+
 function status(options) {
   const chrome = browserDefinition("chrome", options.chromeProfile, options.chromeStore);
   const edge = browserDefinition("edge", options.edgeProfile, options.edgeStore);
@@ -651,11 +748,12 @@ function status(options) {
   showDefinition(edge, readDocument(edge));
   const running = runningBrowsers();
   info(`正在运行：${running.length ? running.join(", ") : "无"}`);
+  info(`API 扩展：Chrome ${extensionStateText("chrome", options.chromeProfile)}；Edge ${extensionStateText("edge", options.edgeProfile)}`);
   const ledgerFile = historyLedgerFile(options);
   info(`历史基线：${fs.existsSync(ledgerFile) ? ledgerFile : "尚未建立（首次 history 会全量比较）"}`);
 }
 
-function synchronize(options) {
+async function synchronize(options) {
   const sourceBrowser = options.sourceBrowser;
   const targetBrowser = options.targetBrowser;
   const sourceProfile = sourceBrowser === "chrome" ? options.chromeProfile : options.edgeProfile;
@@ -684,11 +782,21 @@ function synchronize(options) {
   if (options.mode === "mirror" && !options.yes) {
     fail("mirror 会删除目标端独有收藏夹。请先使用 --dry-run 预览，再加 --yes 执行。", 2);
   }
+  const apiExtension = extensionInstallState(targetBrowser, targetProfile);
+  if (!apiExtension.installed || !apiExtension.enabled) {
+    const state = apiExtension.installed ? "已安装但未启用" : "尚未安装";
+    throw new Error(
+      `${capitalize(targetBrowser)} 的 Bookmark Bridge API 扩展${state}。` +
+      "请先运行 bookmark-bridge setup 完成一次性设置。",
+    );
+  }
   const targetState = browserProcessState(targetBrowser);
   const shouldReopen = targetState.visible.length > 0;
-  const executable = shouldReopen ? browserExecutable(targetBrowser, targetState) : null;
+  const executable = browserExecutable(targetBrowser, targetState);
   stopBrowser(targetBrowser, targetState);
 
+  let apiSession = null;
+  let apiBrowserLaunched = false;
   try {
     // Closing the target may flush last-second bookmark changes. Re-read both
     // files and calculate the final result only after the target has stopped.
@@ -699,21 +807,42 @@ function synchronize(options) {
     result = syncDocuments(source, target, options.mode);
     after = countDocument(result.output);
 
-    if (JSON.stringify(result.output) === JSON.stringify(target)) {
-      info("Already synchronized: no write was needed.");
-      return;
-    }
-
     const backup = backupTarget(targetDef, options.backupDir);
     try {
-      writeAtomically(targetDef.file, result.output);
+      const reconciliation = bookmarkApiReconciliation(result);
+      apiSession = await createBookmarkApiSession(reconciliation.desiredDocument, target, {
+        mode: reconciliation.mode,
+        requireSyncing: targetDef.store === "AccountBookmarks",
+      });
+      launchBrowserForBookmarkApi(
+        targetBrowser,
+        executable,
+        targetProfile,
+        apiSession.triggerUrl,
+        shouldReopen,
+      );
+      apiBrowserLaunched = true;
+      const apiResult = await apiSession.done;
+      info(
+        `浏览器 API：新增 ${apiResult.metrics.added}；更新 ${apiResult.metrics.updated}；` +
+        `移动 ${apiResult.metrics.moved}；删除 ${apiResult.metrics.removed}`,
+      );
     } catch (error) {
-      throw new Error(`Write failed: ${error.message}\nBackup: ${backup}`);
+      throw new Error(`浏览器书签 API 写入失败：${error.message}\n写入前备份：${backup}`);
     }
     info(`Backup: ${backup}`);
-    info("Sync completed.");
+    info("收藏夹同步完成，并已通过浏览器实时模型验证。 ");
   } finally {
-    if (shouldReopen) reopenBrowser(targetBrowser, executable);
+    if (apiSession) await apiSession.close();
+    if (!shouldReopen && apiBrowserLaunched) {
+      try {
+        stopBrowser(targetBrowser, browserProcessState(targetBrowser));
+      } catch (_) {
+        info(`警告：临时启动的 ${capitalize(targetBrowser)} 未能自动退出。`);
+      }
+    } else if (shouldReopen && !apiBrowserLaunched) {
+      reopenBrowser(targetBrowser, executable);
+    }
   }
 }
 
@@ -801,7 +930,7 @@ function synchronizeHistory(options) {
 async function synchronizeAll(options) {
   info(`完整同步：${capitalize(options.sourceBrowser)} -> ${capitalize(options.targetBrowser)}`);
   info("  收藏夹/密码按箭头方向；历史记录始终双向合并。\n");
-  synchronize(options);
+  await synchronize(options);
   await migratePasswords(options);
   // History runs last so that no database or bookmark write races with the
   // browsers that are asynchronously reopened after the final merge.
@@ -821,7 +950,8 @@ async function main() {
   }
   try {
     if (options.command === "status") status(options);
-    else if (options.command === "bookmarks") synchronize(options);
+    else if (options.command === "setup") setupExtension(options);
+    else if (options.command === "bookmarks") await synchronize(options);
     else if (options.command === "passwords") await migratePasswords(options);
     else if (options.command === "history") synchronizeHistory(options);
     else if (options.command === "all") await synchronizeAll(options);
@@ -839,6 +969,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  bookmarkApiReconciliation,
   browserProfileDefinition,
   computeChecksum,
   countDocument,

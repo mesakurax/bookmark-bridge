@@ -34,7 +34,11 @@ bookmark-bridge -h
 
 ### 收藏夹
 
-默认使用安全的 `merge`：源端新增/修改进入目标端，同时保留目标端独有项目。工具先匹配 Chromium GUID，再匹配唯一文件夹名和完全相同的 URL，反复运行不会不断制造副本。
+默认使用安全的 `merge`：源端新增/修改进入目标端，同时保留目标端独有项目。收藏夹不再直接修改 `AccountBookmarks` 文件，而是通过浏览器官方 `bookmarks` API 写入 `syncing: true` 的账户根目录，让 Chrome/Edge 同时更新云同步元数据。
+
+工具在同一父目录下按文件夹名称匹配，书签按完整 URL 匹配；已有 URL 可以移动到源端对应目录。浏览器实时模型会在命令返回前再次验证，因此反复运行不会不断制造副本，也不会再出现 Chrome 重启后回滚却显示成功的问题。
+
+Chromium 可能不提供“移动收藏夹”根目录。此时其中内容会写入账户的“其他收藏夹”，保证仍由浏览器同步且不丢失。
 
 ```powershell
 bookmark-bridge bookmarks-to-chrome --dry-run
@@ -97,6 +101,26 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 
 - 程序：`%LOCALAPPDATA%\Programs\BookmarkBridge`
 - 命令入口：`%USERPROFILE%\.local\bin\bookmark-bridge.cmd`
+- 浏览器扩展：`%LOCALAPPDATA%\Programs\BookmarkBridge\extension`
+
+### 首次浏览器设置
+
+Chrome/Edge 不允许普通程序静默安装本地扩展，因此首次安装后需要在两款浏览器中各确认一次：
+
+```powershell
+bookmark-bridge setup
+```
+
+该命令会打开两款浏览器的扩展页面和扩展文件夹。分别执行：
+
+1. 打开“开发者模式”；
+2. 点击“加载已解压的扩展程序”；
+3. 选择打开的 `extension` 文件夹；
+4. 确认名称为 Bookmark Bridge，扩展 ID 为 `faaofhehocblpehenggfdmpbpjnifpim`。
+
+升级后如果扩展页仍显示旧版本，在 Bookmark Bridge 卡片上点一次“重新加载”。
+
+安装程序已经注册仅限当前用户的 Native Messaging 主机。扩展只接受带一次性随机任务令牌的本机任务；收藏夹内容不会发送到网络。
 
 卸载：
 
@@ -130,7 +154,7 @@ npm test
 node --no-warnings bookmark-bridge.js -h
 ```
 
-每次实际写入前均校验数据结构并创建原始备份。历史写入任一侧失败时会尝试恢复两边数据库；收藏夹使用校验和验证和原子替换。
+每次实际写入前均校验数据结构并创建原始备份。历史写入任一侧失败时会尝试恢复两边数据库；收藏夹通过浏览器实时 API 写入并验证账户同步模型。
 
 ## 许可
 
