@@ -1,6 +1,6 @@
 {
   "name": "bookmark-bridge",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "description": "在 Windows 上手动桥接 Chrome 与 Edge 的收藏夹、密码和浏览记录",
   "license": "MIT",
   "private": true,

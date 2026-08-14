@@ -17,7 +17,7 @@ const { migratePasswords } = require("./password-migrate");
 const { TOKEN_PATTERN, UiJob } = require("./ui-job");
 
 const APP_NAME = "Bookmark Bridge";
-const VERSION = "2.3.0";
+const VERSION = "2.3.1";
 const MANAGED_ROOTS = ["bookmark_bar", "other", "synced"];
 const COMMANDS = new Map([
   ["bookmarks-to-chrome", { action: "bookmarks", sourceBrowser: "edge", targetBrowser: "chrome" }],

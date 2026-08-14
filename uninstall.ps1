@@ -47,7 +47,9 @@ if ($RemoveData) {
     }
 }
 
-Write-Host 'Bookmark Bridge 已卸载。默认保留备份和历史基线。' -ForegroundColor Green
-if (-not $RemoveData) {
+if ($RemoveData) {
+    Write-Host 'Bookmark Bridge 及其备份、历史基线和运行数据已卸载。' -ForegroundColor Green
+} else {
+    Write-Host 'Bookmark Bridge 已卸载。默认保留备份和历史基线。' -ForegroundColor Green
     Write-Host '如需同时删除工具数据，请再次运行 uninstall.ps1 -RemoveData。'
 }

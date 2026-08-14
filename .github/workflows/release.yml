@@ -49,6 +49,9 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
       - name: Build Windows ZIP
         shell: pwsh
         run: |
@@ -62,11 +65,38 @@ jobs:
           )
           Copy-Item -LiteralPath $files -Destination $stage
           Copy-Item -LiteralPath 'extension' -Destination $stage -Recurse
-          Compress-Archive -Path "$stage\*" -DestinationPath "dist\$name.zip" -CompressionLevel Optimal
+          $framework = if ([Environment]::Is64BitOperatingSystem) {
+            'C:\Windows\Microsoft.NET\Framework64\v4.0.30319'
+          } else {
+            'C:\Windows\Microsoft.NET\Framework\v4.0.30319'
+          }
+          $compiler = Join-Path $framework 'csc.exe'
+          $webExtensions = Join-Path $framework 'System.Web.Extensions.dll'
+          & $compiler /nologo /target:exe "/out:$stage\bookmark-bridge-host.exe" "/reference:$webExtensions" .\native-host.cs
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath "$stage\bookmark-bridge-host.exe")) {
+            throw 'Native Host compilation failed.'
+          }
+          $versionedZip = "dist\$name.zip"
+          $stableZip = 'dist\bookmark-bridge-windows.zip'
+          Compress-Archive -Path "$stage\*" -DestinationPath $versionedZip -CompressionLevel Optimal
+          Copy-Item -LiteralPath $versionedZip -Destination $stableZip
+      - name: Packaged installer smoke test
+        shell: pwsh
+        run: |
+          $stage = Get-ChildItem -LiteralPath dist -Directory -Filter 'bookmark-bridge-*-windows' | Select-Object -First 1
+          $app = Join-Path $env:RUNNER_TEMP 'bookmark-bridge-release-app'
+          $bin = Join-Path $env:RUNNER_TEMP 'bookmark-bridge-release-bin'
+          & (Join-Path $stage.FullName 'install.ps1') -InstallDir $app -BinDir $bin -SkipPathUpdate -SkipBrowserRegistration
+          $sourceHash = (Get-FileHash -LiteralPath (Join-Path $stage.FullName 'bookmark-bridge-host.exe')).Hash
+          $installedHash = (Get-FileHash -LiteralPath (Join-Path $app 'bookmark-bridge-host.exe')).Hash
+          if ($sourceHash -ne $installedHash) {
+            throw 'Packaged installer did not use the precompiled Native Host.'
+          }
       - name: Create GitHub Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $zip = Get-ChildItem -LiteralPath dist -Filter 'bookmark-bridge-*.zip' | Select-Object -First 1
-          gh release create $env:GITHUB_REF_NAME $zip.FullName --generate-notes --title "Bookmark Bridge $env:GITHUB_REF_NAME"
+          $versionedZip = Get-ChildItem -LiteralPath dist -Filter 'bookmark-bridge-*-windows.zip' | Select-Object -First 1
+          $stableZip = Join-Path $PWD 'dist\bookmark-bridge-windows.zip'
+          gh release create $env:GITHUB_REF_NAME $versionedZip.FullName $stableZip --generate-notes --title "Bookmark Bridge $env:GITHUB_REF_NAME"

@@ -90,13 +90,15 @@ bookmark-bridge history --reset-history-baseline
 
 ## 安装
 
-要求：Windows 10/11、Chrome 和/或 Edge、Node.js 22.12 或更高版本。
+要求：Windows 10/11、Chrome 和/或 Edge、Node.js 22.12 或更高版本。Release 安装包已携带预编译的浏览器通信组件，不要求新电脑安装 C# 编译环境。
 
 一键安装最新版：
 
 ```powershell
 irm https://raw.githubusercontent.com/mesakurax/bookmark-bridge/main/install-remote.ps1 | iex
 ```
+
+安装脚本优先使用固定的最新版下载地址，不再为每次安装查询 GitHub API，并会显示下载、解压和本地安装三个阶段。
 
 或者从 Release 解压后运行：
 
