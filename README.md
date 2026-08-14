@@ -86,7 +86,7 @@ bookmark-bridge all chrome edge --dry-run --restart-browsers
 bookmark-bridge all chrome edge --restart-browsers
 ```
 
-`all` 依次处理历史记录、收藏夹和密码。前两项自动完成，密码阶段仍会等待你的安全确认。它不是跨三类数据的原子事务；收藏夹和历史记录分别留有备份。
+`all` 依次处理收藏夹、密码和历史记录。收藏夹自动完成，密码阶段会等待你的安全确认，历史记录最后在两款浏览器关闭时合并并重开。实际执行 `all` 必须带 `--restart-browsers`。它不是跨三类数据的原子事务；收藏夹和历史记录分别留有备份。
 
 ## 安装
 

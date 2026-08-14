@@ -10,7 +10,7 @@ const { executeHistorySync } = require("./history-sync");
 const { migratePasswords } = require("./password-migrate");
 
 const APP_NAME = "Bookmark Bridge";
-const VERSION = "2.0.0";
+const VERSION = "2.0.1";
 const MANAGED_ROOTS = ["bookmark_bar", "other", "synced"];
 const DIRECTIONS = new Set(["chrome-to-edge", "edge-to-chrome"]);
 const BROWSERS = new Set(["chrome", "edge"]);
@@ -860,9 +860,19 @@ function synchronizeHistory(options) {
 async function synchronizeAll(options) {
   info(`完整同步：${capitalize(options.sourceBrowser)} -> ${capitalize(options.targetBrowser)}`);
   info("  收藏夹/密码按箭头方向；历史记录始终双向合并。\n");
-  synchronizeHistory(options);
+  if (!options.dryRun && !options.restartBrowsers) {
+    const error = new Error(
+      "完整同步最后需要关闭两款浏览器来写入历史记录。" +
+      "请加 --restart-browsers，或分别运行单项命令。",
+    );
+    error.exitCode = 3;
+    throw error;
+  }
   synchronize(options);
   await migratePasswords(options);
+  // History runs last so that no database or bookmark write races with the
+  // browsers that are asynchronously reopened after the final merge.
+  synchronizeHistory(options);
   info("完整同步流程结束。");
 }
 
