@@ -7,6 +7,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const EXTENSION_ID = "faaofhehocblpehenggfdmpbpjnifpim";
+const MOBILE_FALLBACK_TITLE = "移动收藏夹（Bookmark Bridge）";
 
 function localAppData() {
   return process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local");
@@ -32,6 +33,7 @@ function makeJob(desiredDocument, targetDocument, mode, requireSyncing) {
     version: 1,
     mode,
     requireSyncing,
+    mobileFallbackTitle: MOBILE_FALLBACK_TITLE,
     roots: {
       bookmark_bar: compactNode(desiredDocument.roots.bookmark_bar),
       other: compactNode(desiredDocument.roots.other),
@@ -132,6 +134,7 @@ async function createBookmarkApiSession(desiredDocument, targetDocument, options
 
 module.exports = {
   EXTENSION_ID,
+  MOBILE_FALLBACK_TITLE,
   compactNode,
   createBookmarkApiSession,
   extensionDirectory,

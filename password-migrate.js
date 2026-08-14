@@ -5,6 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const readline = require("node:readline/promises");
 const { spawn } = require("node:child_process");
+const { UiJob } = require("./ui-job");
 
 function localAppData() {
   return process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local");
@@ -144,7 +145,8 @@ async function migratePasswords(options) {
   cleanupStaleCsv(stagingDir);
   const before = snapshotCsvFiles();
   const startedAt = Date.now();
-  const terminal = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const uiJob = options.uiJob ? new UiJob(options.uiJob) : null;
+  const terminal = uiJob ? null : readline.createInterface({ input: process.stdin, output: process.stdout });
   let staged = false;
 
   const cleanup = () => {
@@ -159,11 +161,22 @@ async function migratePasswords(options) {
     openPasswordManager(options.sourceBrowser, sourceProfile);
     console.log(`\n1. 已打开 ${sourceLabel} 密码管理页。`);
     console.log("   请点击“导出密码”，完成 Windows Hello，并在保存窗口保留默认 CSV 文件名。\n");
-    await terminal.question("导出完成后按 Enter 继续……");
+    if (uiJob) {
+      await uiJob.waitForSignal("password-export", {
+        browser: sourceLabel,
+        message: `在 ${sourceLabel} 导出密码 CSV，完成后返回扩展继续。`,
+      });
+    } else {
+      await terminal.question("导出完成后按 Enter 继续……");
+    }
 
     let exportedFile = findNewPasswordCsv(startedAt, before);
     if (!exportedFile) {
-      const pasted = (await terminal.question("没有在下载/桌面目录自动找到新密码 CSV，请粘贴完整路径：")).trim();
+      const pasted = uiJob
+        ? String((await uiJob.waitForSignal("password-path", {
+            message: "没有自动找到新密码 CSV，请输入完整路径。",
+          })).value || "").trim()
+        : (await terminal.question("没有在下载/桌面目录自动找到新密码 CSV，请粘贴完整路径：")).trim();
       exportedFile = pasted.replace(/^['\"]|['\"]$/g, "");
     }
     stageCsv(exportedFile, stagingFile);
@@ -174,12 +187,20 @@ async function migratePasswords(options) {
     console.log("   请点击“导入密码”，在文件窗口选择下面这个临时文件：");
     console.log(`   ${stagingFile}`);
     console.log("   若出现重复项：以本次源浏览器为准时选择“替换”，否则选择“跳过”。\n");
-    await terminal.question("确认目标浏览器已完成导入后按 Enter；随后将删除临时明文 CSV……");
+    if (uiJob) {
+      await uiJob.waitForSignal("password-import", {
+        browser: targetLabel,
+        stagingFile,
+        message: `在 ${targetLabel} 导入临时 CSV，完成后返回扩展确认。`,
+      });
+    } else {
+      await terminal.question("确认目标浏览器已完成导入后按 Enter；随后将删除临时明文 CSV……");
+    }
     console.log("密码迁移流程完成。");
     return { dryRun: false, sourceBrowser: options.sourceBrowser, targetBrowser: options.targetBrowser };
   } finally {
     process.removeListener("SIGINT", onInterrupt);
-    terminal.close();
+    if (terminal) terminal.close();
     cleanup();
   }
 }

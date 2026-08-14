@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Bookmark Bridge</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div class="mark" aria-hidden="true">B</div>
+      <div>
+        <h1>Bookmark Bridge</h1>
+        <p>Chrome · Edge 本地同步</p>
+      </div>
+      <span id="status-pill" class="pill idle">就绪</span>
+    </header>
+
+    <section class="command-section">
+      <h2>收藏夹</h2>
+      <div class="grid">
+        <button data-command="bookmarks-to-chrome"><span>Edge</span><b>→ Chrome</b></button>
+        <button data-command="bookmarks-to-edge"><span>Chrome</span><b>→ Edge</b></button>
+      </div>
+    </section>
+
+    <section class="command-section">
+      <h2>密码</h2>
+      <div class="grid">
+        <button data-command="passwords-to-chrome"><span>Edge</span><b>→ Chrome</b></button>
+        <button data-command="passwords-to-edge"><span>Chrome</span><b>→ Edge</b></button>
+      </div>
+    </section>
+
+    <section class="command-section">
+      <h2>记录与完整同步</h2>
+      <button class="wide" data-command="history"><span>浏览记录</span><b>双向合并</b></button>
+      <div class="grid top-gap">
+        <button class="accent" data-command="all-to-chrome"><span>全部数据</span><b>同步到 Chrome</b></button>
+        <button class="accent" data-command="all-to-edge"><span>全部数据</span><b>同步到 Edge</b></button>
+      </div>
+    </section>
+
+    <section id="task-card" class="task-card hidden" aria-live="polite">
+      <div class="task-head">
+        <div>
+          <span class="eyebrow">当前任务</span>
+          <h2 id="task-title">正在准备</h2>
+        </div>
+        <span id="spinner" class="spinner" aria-hidden="true"></span>
+      </div>
+      <p id="task-message"></p>
+      <div id="path-box" class="path-box hidden">
+        <input id="path-input" type="text" autocomplete="off" spellcheck="false" placeholder="C:\\Users\\...\\passwords.csv">
+      </div>
+      <div id="task-actions" class="task-actions hidden">
+        <button id="continue-button" class="primary">继续</button>
+        <button id="cancel-button" class="quiet">取消任务</button>
+      </div>
+      <details>
+        <summary>运行日志</summary>
+        <pre id="task-log">尚无输出</pre>
+      </details>
+    </section>
+
+    <footer>同步期间浏览器可能自动重启；任务会在本地继续。</footer>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

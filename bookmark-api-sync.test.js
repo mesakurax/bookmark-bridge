@@ -6,7 +6,8 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
-const { EXTENSION_ID, makeJob } = require("./bookmark-api-sync");
+const { EXTENSION_ID, MOBILE_FALLBACK_TITLE, makeJob } = require("./bookmark-api-sync");
+const { countDocument, normalizeMobileFallback } = require("./bookmark-bridge");
 
 function folder(id, name, children = []) {
   return { id, name, type: "folder", children };
@@ -158,8 +159,11 @@ test("固定扩展 ID 与清单 key 对应", () => {
   assert.equal(EXTENSION_ID, "faaofhehocblpehenggfdmpbpjnifpim");
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "extension", "manifest.json"), "utf8"));
   assert.equal(manifest.name, "Bookmark Bridge");
+  assert.equal(manifest.version, require("./package.json").version);
   assert.ok(manifest.permissions.includes("bookmarks"));
   assert.ok(manifest.permissions.includes("nativeMessaging"));
+  assert.ok(manifest.permissions.includes("storage"));
+  assert.equal(manifest.action.default_popup, "popup.html");
 });
 
 test("扩展通过同步根目录写入杂项，并保持幂等", async () => {
@@ -191,7 +195,7 @@ test("扩展通过同步根目录写入杂项，并保持幂等", async () => {
   assert.equal(mock.completion().ok, true);
 });
 
-test("缺少移动根目录时将其内容写入同步的其他书签", async () => {
+test("缺少移动根目录时创建同步的包装目录", async () => {
   const { source, target } = documents();
   source.roots.synced.children.push({
     id: "12",
@@ -212,11 +216,24 @@ test("缺少移动根目录时将其内容写入同步的其他书签", async ()
 
   const first = await mock.run("c".repeat(48));
   assert.equal(first.ok, true);
-  assert.equal(first.metrics.added, 3);
+  assert.equal(first.metrics.added, 4);
   const other = mock.nodes.get("503");
-  assert.equal(other.children.filter((node) => node.url === "https://bookmark-bridge.invalid/mobile").length, 1);
+  const fallback = other.children.find((node) => node.title === MOBILE_FALLBACK_TITLE);
+  assert.ok(fallback);
+  assert.equal(fallback.children.filter((node) => node.url === "https://bookmark-bridge.invalid/mobile").length, 1);
 
   const second = await mock.run("d".repeat(48));
   assert.equal(second.ok, true);
   assert.equal(second.metrics.added, 0);
+});
+
+test("普通移动收藏夹包装目录在内存中映射回语义根目录", () => {
+  const { target } = documents();
+  target.roots.other.children.push(folder("20", MOBILE_FALLBACK_TITLE, [
+    { id: "21", name: "Mobile", type: "url", url: "https://bookmark-bridge.invalid/mobile" },
+  ]));
+  normalizeMobileFallback(target);
+  assert.equal(target.roots.other.children.length, 0);
+  assert.equal(target.roots.synced.children.length, 1);
+  assert.deepEqual(countDocument(target), { urls: 1, folders: 0 });
 });

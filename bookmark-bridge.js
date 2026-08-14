@@ -6,12 +6,18 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { execFileSync, spawn } = require("child_process");
-const { EXTENSION_ID, createBookmarkApiSession, extensionDirectory } = require("./bookmark-api-sync");
+const {
+  EXTENSION_ID,
+  MOBILE_FALLBACK_TITLE,
+  createBookmarkApiSession,
+  extensionDirectory,
+} = require("./bookmark-api-sync");
 const { executeHistorySync } = require("./history-sync");
 const { migratePasswords } = require("./password-migrate");
+const { TOKEN_PATTERN, UiJob } = require("./ui-job");
 
 const APP_NAME = "Bookmark Bridge";
-const VERSION = "2.2.1";
+const VERSION = "2.3.0";
 const MANAGED_ROOTS = ["bookmark_bar", "other", "synced"];
 const COMMANDS = new Map([
   ["bookmarks-to-chrome", { action: "bookmarks", sourceBrowser: "edge", targetBrowser: "chrome" }],
@@ -22,9 +28,15 @@ const COMMANDS = new Map([
   ["all-to-chrome", { action: "all", sourceBrowser: "edge", targetBrowser: "chrome" }],
   ["all-to-edge", { action: "all", sourceBrowser: "chrome", targetBrowser: "edge" }],
 ]);
+let activeUiJob = null;
 
 function fail(message, exitCode = 1) {
   console.error(`错误：${message}`);
+  if (activeUiJob) {
+    const error = new Error(message);
+    error.exitCode = exitCode;
+    activeUiJob.fail(error);
+  }
   process.exit(exitCode);
 }
 
@@ -125,6 +137,7 @@ function parseArgs(argv) {
     edgeStore: null,
     backupDir: null,
     resetHistoryBaseline: false,
+    uiJob: null,
   };
 
   for (let index = 1; index < argv.length; index += 1) {
@@ -139,6 +152,7 @@ function parseArgs(argv) {
     else if (arg === "--chrome-store") result.chromeStore = requiredValue(argv, ++index, arg);
     else if (arg === "--edge-store") result.edgeStore = requiredValue(argv, ++index, arg);
     else if (arg === "--backup-dir") result.backupDir = requiredValue(argv, ++index, arg);
+    else if (arg === "--ui-job") result.uiJob = requiredValue(argv, ++index, arg);
     else fail(`未知选项：${arg}。使用 bookmark-bridge -h 查看帮助。`);
   }
 
@@ -150,6 +164,7 @@ function parseArgs(argv) {
       fail(`${label} 存储文件必须是 Bookmarks 或 AccountBookmarks。`);
     }
   }
+  if (result.uiJob && !TOKEN_PATTERN.test(result.uiJob)) fail("无效的扩展任务令牌。");
   return result;
 }
 
@@ -213,6 +228,25 @@ function readDocument(definition) {
     throw new Error(`Could not read ${definition.file}: ${error.message}`);
   }
   validateDocument(document, definition.file, true);
+  normalizeMobileFallback(document);
+  return document;
+}
+
+function normalizeMobileFallback(document) {
+  const otherChildren = document.roots?.other?.children || [];
+  const index = otherChildren.findIndex((node) =>
+    node.type === "folder" && node.name === MOBILE_FALLBACK_TITLE);
+  if (index === -1) return document;
+  const [fallback] = otherChildren.splice(index, 1);
+  document.roots.synced.children = [
+    ...(document.roots.synced.children || []),
+    ...(fallback.children || []),
+  ];
+  // The normalized in-memory tree treats the ordinary wrapper as the semantic
+  // mobile root. Recalculate only the in-memory checksum; the browser file is
+  // untouched and the original on-disk file was validated above.
+  refreshChecksums(document);
+  validateDocument(document, "normalized bookmark document", true);
   return document;
 }
 
@@ -560,7 +594,7 @@ function stopBrowser(browser, state) {
   // First request a normal close so the browser can flush its profile. If any
   // startup-boost/background processes remain, stop only those after waiting.
   try {
-    execFileSync("taskkill.exe", ["/IM", imageName, "/T"], { stdio: "ignore", windowsHide: true });
+    execFileSync("taskkill.exe", ["/IM", imageName], { stdio: "ignore", windowsHide: true });
   } catch (_) {
     // taskkill may report failure for sandboxed child processes even when the
     // main browser accepted the close request; the state check below decides.
@@ -570,7 +604,7 @@ function stopBrowser(browser, state) {
     sleep(250);
   }
   try {
-    execFileSync("taskkill.exe", ["/IM", imageName, "/T", "/F"], { stdio: "ignore", windowsHide: true });
+    execFileSync("taskkill.exe", ["/IM", imageName, "/F"], { stdio: "ignore", windowsHide: true });
   } catch (_) {
     // Verify below and return a useful error if processes remain.
   }
@@ -938,18 +972,18 @@ async function synchronizeAll(options) {
   info("完整同步流程结束。");
 }
 
-async function main() {
-  const options = parseArgs(process.argv.slice(2));
-  if (options.command === "version") {
-    console.log(`${APP_NAME} ${VERSION}`);
-    return;
-  }
-  if (options.command === "help" || options.command === "--help" || options.command === "-h") {
-    usage();
-    return;
+async function main(argv = process.argv.slice(2)) {
+  const options = parseArgs(argv);
+  let restoreConsole = null;
+  if (options.uiJob) {
+    activeUiJob = new UiJob(options.uiJob);
+    activeUiJob.start(options.requestedCommand);
+    restoreConsole = activeUiJob.captureConsole();
   }
   try {
-    if (options.command === "status") status(options);
+    if (options.command === "version") console.log(`${APP_NAME} ${VERSION}`);
+    else if (options.command === "help" || options.command === "--help" || options.command === "-h") usage();
+    else if (options.command === "status") status(options);
     else if (options.command === "setup") setupExtension(options);
     else if (options.command === "bookmarks") await synchronize(options);
     else if (options.command === "passwords") await migratePasswords(options);
@@ -959,8 +993,18 @@ async function main() {
       usage();
       fail(`未知命令：${options.command}。使用 bookmark-bridge -h 查看帮助。`);
     }
+    if (activeUiJob) activeUiJob.complete();
   } catch (error) {
+    if (activeUiJob) {
+      console.error(`错误：${error.message || String(error)}`);
+      activeUiJob.fail(error);
+      if (restoreConsole) restoreConsole();
+      process.exit(error.cancelled ? 130 : (error.exitCode || 1));
+    }
     fail(error.message || String(error), error.exitCode || 1);
+  } finally {
+    if (restoreConsole) restoreConsole();
+    activeUiJob = null;
   }
 }
 
@@ -974,6 +1018,8 @@ module.exports = {
   computeChecksum,
   countDocument,
   historyLedgerFile,
+  main,
+  normalizeMobileFallback,
   parseArgs,
   refreshChecksums,
   syncDocuments,

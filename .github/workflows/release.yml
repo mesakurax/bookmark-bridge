@@ -56,7 +56,7 @@ jobs:
           $stage = Join-Path $PWD "dist\$name"
           New-Item -ItemType Directory -Path $stage -Force | Out-Null
           $files = @(
-            'bookmark-bridge.js', 'bookmark-api-sync.js', 'history-sync.js', 'password-migrate.js',
+            'bookmark-bridge.js', 'bookmark-api-sync.js', 'ui-job.js', 'history-sync.js', 'password-migrate.js',
             'bookmark-bridge.cmd',
             'native-host.cs', 'install.ps1', 'uninstall.ps1', 'README.md', 'LICENSE'
           )

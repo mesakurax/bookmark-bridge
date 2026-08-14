@@ -45,6 +45,19 @@ test("解析版本命令", () => {
   assert.equal(parseArgs(["-v"]).command, "version");
 });
 
+test("扩展后台只接受 48 位任务令牌", () => {
+  const token = "a".repeat(48);
+  assert.equal(parseArgs(["history", "--ui-job", token]).uiJob, token);
+  const invalid = spawnSync(process.execPath, [
+    path.join(__dirname, "bookmark-bridge.js"),
+    "history",
+    "--ui-job",
+    "short",
+  ], { encoding: "utf8" });
+  assert.notEqual(invalid.status, 0);
+  assert.match(invalid.stderr, /无效的扩展任务令牌/);
+});
+
 test("旧命令和重启参数不再兼容", () => {
   assert.equal(fs.existsSync(path.join(__dirname, "bookmark-sync.cmd")), false);
   assert.equal(fs.existsSync(path.join(__dirname, "bookmark-sync.js")), false);

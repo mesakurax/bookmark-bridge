@@ -27,6 +27,7 @@ $sourceDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $files = @(
     'bookmark-bridge.js',
     'bookmark-api-sync.js',
+    'ui-job.js',
     'history-sync.js',
     'password-migrate.js',
     'bookmark-bridge.cmd',
@@ -49,11 +50,19 @@ New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
 foreach ($file in $files) {
     Copy-Item -LiteralPath (Join-Path $sourceDir $file) -Destination (Join-Path $InstallDir $file) -Force
 }
+[IO.File]::WriteAllText(
+    (Join-Path $InstallDir 'node-path.txt'),
+    ($node.Source + "`n"),
+    [Text.UTF8Encoding]::new($false)
+)
 $extensionTarget = Join-Path $InstallDir 'extension'
 New-Item -ItemType Directory -Path $extensionTarget -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $sourceDir 'extension\manifest.json') -Destination $extensionTarget -Force
 Copy-Item -LiteralPath (Join-Path $sourceDir 'extension\content.js') -Destination $extensionTarget -Force
 Copy-Item -LiteralPath (Join-Path $sourceDir 'extension\worker.js') -Destination $extensionTarget -Force
+Copy-Item -LiteralPath (Join-Path $sourceDir 'extension\popup.html') -Destination $extensionTarget -Force
+Copy-Item -LiteralPath (Join-Path $sourceDir 'extension\popup.css') -Destination $extensionTarget -Force
+Copy-Item -LiteralPath (Join-Path $sourceDir 'extension\popup.js') -Destination $extensionTarget -Force
 
 # Build and register the small native-messaging host used to authenticate local
 # bookmark jobs. It never reads passwords or browser history.

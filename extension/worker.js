@@ -58,16 +58,29 @@ async function findManagedRoots(job) {
       if (!result[key]) throw new Error("找不到收藏夹根目录：" + key);
     }
   }
-  // Chromium explicitly allows the special mobile root to be absent. Its
-  // children still need a synced destination, so fall back to Other Bookmarks.
-  // Unlike creating a regular folder, this keeps every imported node inside a
-  // browser-owned account root without inventing an unsupported permanent root.
+  let fallbackAdded = 0;
+  // Chromium explicitly allows the special mobile root to be absent. Preserve
+  // its category in a regular synced folder under Other Bookmarks. The CLI
+  // normalizes this wrapper back into the semantic mobile root on later runs.
+  if (!result.synced && (job.roots.synced.children || []).length > 0) {
+    const children = await getChildren(result.other.id);
+    result.synced = children.find((node) =>
+      isFolder(node) && !node.folderType && node.title === job.mobileFallbackTitle) || null;
+    if (!result.synced) {
+      result.synced = await chrome.bookmarks.create({
+        parentId: String(result.other.id),
+        title: job.mobileFallbackTitle,
+      });
+      fallbackAdded = 1;
+    }
+  }
   if (!result.synced) result.synced = result.other;
-  return result;
+  return { roots: result, fallbackAdded };
 }
 
 async function merge(job) {
-  const roots = await findManagedRoots(job);
+  const rootResult = await findManagedRoots(job);
+  const roots = rootResult.roots;
   const allowedIds = new Set();
   for (const root of Object.values(roots)) {
     const subtree = await chrome.bookmarks.getSubTree(root.id);
@@ -77,7 +90,7 @@ async function merge(job) {
   const used = new Set();
   const desired = new Set();
   const expected = [];
-  const metrics = { added: 0, updated: 0, moved: 0, removed: 0 };
+  const metrics = { added: rootResult.fallbackAdded, updated: 0, moved: 0, removed: 0 };
 
   async function updateNode(node, changes) {
     const actual = {};
@@ -147,10 +160,13 @@ async function merge(job) {
   }
 
   if (job.mode === "mirror") {
+    const protectedRoots = new Set(Object.values(roots).map((root) => String(root.id)));
     async function prune(parentId) {
       const children = await getChildren(parentId);
       for (const child of children) {
-        if (desired.has(String(child.id))) {
+        if (protectedRoots.has(String(child.id))) {
+          await prune(String(child.id));
+        } else if (desired.has(String(child.id))) {
           if (isFolder(child)) await prune(String(child.id));
         } else {
           if (isFolder(child)) await chrome.bookmarks.removeTree(child.id);
