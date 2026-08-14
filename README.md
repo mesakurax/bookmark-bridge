@@ -1,117 +1,102 @@
 # Bookmark Bridge
 
-一个简洁的 Windows 命令行工具，在不关闭 Chrome Sync / Edge Sync、也不修改两款浏览器同步设置的前提下，手动桥接收藏夹、密码和浏览记录。
+一个简洁的 Windows 命令行工具，在不修改 Chrome Sync / Edge Sync 设置的前提下，手动桥接收藏夹、密码和浏览记录。
 
-## 五个同步命令
+## 7 个主要命令
 
 ```powershell
-# 三个单项命令
-bookmark-bridge bookmarks edge chrome
-bookmark-bridge passwords edge chrome
+# 收藏夹
+bookmark-bridge bookmarks-to-chrome  # Edge -> Chrome
+bookmark-bridge bookmarks-to-edge    # Chrome -> Edge
+
+# 密码
+bookmark-bridge passwords-to-chrome  # Edge -> Chrome
+bookmark-bridge passwords-to-edge    # Chrome -> Edge
+
+# 历史记录：无方向，双方都变成 A+B
 bookmark-bridge history
 
-# 两个完整同步命令
-bookmark-bridge all edge chrome
-bookmark-bridge all chrome edge
+# 完整同步
+bookmark-bridge all-to-chrome         # 收藏夹/密码 Edge -> Chrome；历史双向
+bookmark-bridge all-to-edge           # 收藏夹/密码 Chrome -> Edge；历史双向
 ```
 
-浏览器顺序始终是 `<源> <目标>`。收藏夹和密码按这个方向同步；历史记录没有方向，始终让两边都得到 A+B。因此：
+浏览器重启完全自动，无需额外参数。需要关闭浏览器时，工具会自动关闭并重开原本有窗口的浏览器；浏览器原本没开则不会额外打开。关闭窗口可能丢失尚未提交的网页表单文字。
 
-- `all edge chrome`：收藏夹、密码 Edge → Chrome；历史记录 Edge ↔ Chrome。
-- `all chrome edge`：收藏夹、密码 Chrome → Edge；历史记录 Edge ↔ Chrome。
+查看状态和完整中文帮助：
+
+```powershell
+bookmark-bridge status
+bookmark-bridge -h
+```
 
 ## 数据规则
 
 ### 收藏夹
 
-默认使用安全的 `merge`：源端新增/修改会进入目标端，同时保留目标端独有项目。工具先匹配 Chromium GUID，再匹配唯一文件夹名和完全相同的 URL，反复运行不会不断制造副本。
+默认使用安全的 `merge`：源端新增/修改进入目标端，同时保留目标端独有项目。工具先匹配 Chromium GUID，再匹配唯一文件夹名和完全相同的 URL，反复运行不会不断制造副本。
 
 ```powershell
-bookmark-bridge bookmarks edge chrome --dry-run
-bookmark-bridge bookmarks edge chrome --restart-target
+bookmark-bridge bookmarks-to-chrome --dry-run
+bookmark-bridge bookmarks-to-chrome
 ```
 
 精确镜像会删除目标端独有收藏夹，必须先预览并显式确认：
 
 ```powershell
-bookmark-bridge bookmarks chrome edge --mode mirror --dry-run
-bookmark-bridge bookmarks chrome edge --mode mirror --yes --restart-target
+bookmark-bridge bookmarks-to-edge --mode mirror --dry-run
+bookmark-bridge bookmarks-to-edge --mode mirror --yes
 ```
 
 ### 密码
 
-密码使用浏览器原生 CSV 导出/导入，不直接解密 Chrome/Edge 的密码数据库。命令会：
+密码使用浏览器原生 CSV 导出/导入，不直接解密 Chrome/Edge 的密码数据库。命令会打开源页面、识别新导出的密码 CSV、移动到本地临时目录、打开目标页面，并在导入完成后删除明文 CSV。
 
-1. 打开源浏览器的密码管理页；
-2. 等你亲自确认导出和 Windows Hello；
-3. 自动识别下载/桌面中的新密码 CSV，并移动到用户本地临时目录；
-4. 打开目标浏览器的密码管理页；
-5. 等你亲自完成导入后删除明文 CSV。
-
-```powershell
-bookmark-bridge passwords chrome edge
-```
-
-密码迁移不是无人值守操作。稳定版 Chromium 没有面向普通用户的完整密码导出命令行接口，安全确认也不应被绕过。目标浏览器遇到相同 `网址 + 用户名` 时会显示冲突；如果本次源浏览器是主导，选择“替换”，否则选择“跳过”。
+导出、Windows Hello 和导入确认必须由你亲自操作，因此密码迁移不是无人值守流程。目标浏览器遇到相同 `网址 + 用户名` 时会显示冲突；本次源浏览器是主导时选择“替换”，否则选择“跳过”。
 
 ### 浏览记录
 
-历史记录采用双向集合合并：第一次全量比较，之后保存本地增量基线，只比较新访问。去重键由网址、精确访问时间、跳转类型等稳定事件字段组成：
+历史记录采用双向集合合并：第一次全量比较，以后利用本地增量基线只处理新访问。工具按网址、精确访问时间、跳转类型等稳定事件字段去重：
 
 - 同一个已复制事件再次运行：不会重复；
 - 同一网址在 10:00 和 10:05 分别访问：保留两条；
 - 两边恰好各有一条相同事件：最终各保留一条；
-- 你在一边删除旧历史：删除不会传播，下一次也不会因基线而把本地删除的旧记录补回来。
-
-历史数据库同时写两边，执行前必须退出两款浏览器：
+- 在一边删除旧历史：删除不会传播，也不会在下一次被旧基线补回。
 
 ```powershell
-bookmark-bridge history --dry-run --restart-browsers
-bookmark-bridge history --restart-browsers
+bookmark-bridge history --dry-run
+bookmark-bridge history
+bookmark-bridge history --reset-history-baseline
 ```
 
-如果浏览器历史库被重建或配置目录更换，可重新做一次全量基线：
+即使是历史记录预览，也可能需要短暂关闭两款浏览器，因为 Chromium 会锁定 History 数据库。
 
-```powershell
-bookmark-bridge history --reset-history-baseline --restart-browsers
-```
+### 完整同步
 
-## 完整同步
+`all-to-chrome` / `all-to-edge` 依次处理收藏夹、密码和历史记录。收藏夹自动完成，密码阶段等待安全确认，历史记录最后自动关闭两款浏览器、合并并重开。
 
-```powershell
-bookmark-bridge all edge chrome --dry-run --restart-browsers
-bookmark-bridge all edge chrome --restart-browsers
-
-bookmark-bridge all chrome edge --dry-run --restart-browsers
-bookmark-bridge all chrome edge --restart-browsers
-```
-
-`all` 依次处理收藏夹、密码和历史记录。收藏夹自动完成，密码阶段会等待你的安全确认，历史记录最后在两款浏览器关闭时合并并重开。实际执行 `all` 必须带 `--restart-browsers`。它不是跨三类数据的原子事务；收藏夹和历史记录分别留有备份。
+它不是跨三类数据的原子事务；收藏夹和历史记录分别留有备份。
 
 ## 安装
 
 要求：Windows 10/11、Chrome 和/或 Edge、Node.js 22.12 或更高版本。
 
-从 Release 解压后运行：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install.ps1
-```
-
-仓库版一键安装：
+一键安装最新版：
 
 ```powershell
 irm https://raw.githubusercontent.com/mesakurax/bookmark-bridge/main/install-remote.ps1 | iex
 ```
 
-安装程序把应用放在 `%LOCALAPPDATA%\Programs\BookmarkBridge`，把命令入口放在 `%USERPROFILE%\.local\bin`，并在需要时加入当前用户 PATH。打开新的 PowerShell 后运行：
+或者从 Release 解压后运行：
 
 ```powershell
-bookmark-bridge -h
-bookmark-bridge status
+powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-旧名称 `bookmark-sync edge-to-chrome` 和 `bookmark-sync chrome-to-edge` 继续兼容。
+安装位置：
+
+- 程序：`%LOCALAPPDATA%\Programs\BookmarkBridge`
+- 命令入口：`%USERPROFILE%\.local\bin\bookmark-bridge.cmd`
 
 卸载：
 
@@ -124,7 +109,7 @@ powershell -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\Programs\BookmarkBri
 默认使用两款浏览器的 `Default` 配置。其他配置可指定：
 
 ```powershell
-bookmark-bridge all edge chrome --edge-profile "Profile 1" --chrome-profile "Profile 2" --restart-browsers
+bookmark-bridge all-to-chrome --edge-profile "Profile 1" --chrome-profile "Profile 2"
 ```
 
 默认数据目录：
@@ -140,8 +125,9 @@ bookmark-bridge all edge chrome --edge-profile "Profile 1" --chrome-profile "Pro
 项目没有第三方运行时依赖。
 
 ```powershell
-node --no-warnings --test *.test.js
-node --no-warnings bookmark-sync.js -h
+npm run check
+npm test
+node --no-warnings bookmark-bridge.js -h
 ```
 
 每次实际写入前均校验数据结构并创建原始备份。历史写入任一侧失败时会尝试恢复两边数据库；收藏夹使用校验和验证和原子替换。

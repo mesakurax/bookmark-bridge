@@ -24,11 +24,10 @@ if ($nodeVersion -lt [version]'22.12.0') {
 
 $sourceDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $files = @(
-    'bookmark-sync.js',
+    'bookmark-bridge.js',
     'history-sync.js',
     'password-migrate.js',
     'bookmark-bridge.cmd',
-    'bookmark-sync.cmd',
     'README.md',
     'LICENSE',
     'uninstall.ps1'
@@ -45,10 +44,24 @@ foreach ($file in $files) {
     Copy-Item -LiteralPath (Join-Path $sourceDir $file) -Destination (Join-Path $InstallDir $file) -Force
 }
 
-$entry = Join-Path $InstallDir 'bookmark-sync.js'
+$entry = Join-Path $InstallDir 'bookmark-bridge.js'
 $shim = "@echo off`r`nnode --no-warnings `"$entry`" %*`r`nexit /b %errorlevel%`r`n"
 [IO.File]::WriteAllText((Join-Path $BinDir 'bookmark-bridge.cmd'), $shim, [Text.UTF8Encoding]::new($false))
-[IO.File]::WriteAllText((Join-Path $BinDir 'bookmark-sync.cmd'), $shim, [Text.UTF8Encoding]::new($false))
+
+# 2.1 起不再提供旧命令；升级时只清理由本工具创建的旧入口。
+$legacyShim = Join-Path $BinDir 'bookmark-sync.cmd'
+if (Test-Path -LiteralPath $legacyShim) {
+    $legacyContent = Get-Content -LiteralPath $legacyShim -Raw
+    if ($legacyContent -like '*BookmarkBridge*' -or $legacyContent -like '*bookmark-sync.js*') {
+        Remove-Item -LiteralPath $legacyShim -Force
+    }
+}
+foreach ($legacyName in @('bookmark-sync.js', 'bookmark-sync.cmd')) {
+    $legacyFile = Join-Path $InstallDir $legacyName
+    if (Test-Path -LiteralPath $legacyFile) {
+        Remove-Item -LiteralPath $legacyFile -Force
+    }
+}
 
 if (-not $SkipPathUpdate) {
     $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')

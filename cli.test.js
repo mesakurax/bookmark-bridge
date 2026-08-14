@@ -1,35 +1,43 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 const test = require("node:test");
 
-const { parseArgs } = require("./bookmark-sync");
+const { parseArgs } = require("./bookmark-bridge");
 
-test("解析三个分类命令", () => {
-  assert.deepEqual(
-    pick(parseArgs(["bookmarks", "edge", "chrome", "--dry-run"])),
-    { command: "bookmarks", sourceBrowser: "edge", targetBrowser: "chrome", dryRun: true },
-  );
-  assert.deepEqual(
-    pick(parseArgs(["passwords", "chrome", "edge"])),
-    { command: "passwords", sourceBrowser: "chrome", targetBrowser: "edge", dryRun: false },
-  );
-  assert.equal(parseArgs(["history", "--reset-history-baseline"]).resetHistoryBaseline, true);
+const expectedCommands = [
+  ["bookmarks-to-chrome", "bookmarks", "edge", "chrome"],
+  ["bookmarks-to-edge", "bookmarks", "chrome", "edge"],
+  ["passwords-to-chrome", "passwords", "edge", "chrome"],
+  ["passwords-to-edge", "passwords", "chrome", "edge"],
+  ["history", "history", null, null],
+  ["all-to-chrome", "all", "edge", "chrome"],
+  ["all-to-edge", "all", "chrome", "edge"],
+];
+
+test("7 个固定命令映射到正确的数据类型和方向", () => {
+  for (const [requested, action, source, target] of expectedCommands) {
+    const options = parseArgs([requested]);
+    assert.equal(options.requestedCommand, requested);
+    assert.equal(options.command, action);
+    assert.equal(options.sourceBrowser, source);
+    assert.equal(options.targetBrowser, target);
+  }
 });
 
-test("解析两个完整同步方向", () => {
-  const edgeToChrome = parseArgs(["all", "edge", "chrome", "--restart-browsers"]);
-  const chromeToEdge = parseArgs(["all", "chrome", "edge", "--restart-browsers"]);
-  assert.deepEqual([edgeToChrome.sourceBrowser, edgeToChrome.targetBrowser], ["edge", "chrome"]);
-  assert.deepEqual([chromeToEdge.sourceBrowser, chromeToEdge.targetBrowser], ["chrome", "edge"]);
-  assert.equal(edgeToChrome.restartBrowsers, true);
-});
-
-test("旧收藏夹命令保持兼容", () => {
-  assert.deepEqual(
-    pick(parseArgs(["edge-to-chrome", "--dry-run"])),
-    { command: "bookmarks", sourceBrowser: "edge", targetBrowser: "chrome", dryRun: true },
-  );
+test("主要选项仍可附加在固定命令后", () => {
+  const options = parseArgs([
+    "all-to-chrome",
+    "--dry-run",
+    "--chrome-profile", "Profile 1",
+    "--edge-profile", "Profile 2",
+  ]);
+  assert.equal(options.dryRun, true);
+  assert.equal(options.chromeProfile, "Profile 1");
+  assert.equal(options.edgeProfile, "Profile 2");
 });
 
 test("解析版本命令", () => {
@@ -37,11 +45,21 @@ test("解析版本命令", () => {
   assert.equal(parseArgs(["-v"]).command, "version");
 });
 
-function pick(options) {
-  return {
-    command: options.command,
-    sourceBrowser: options.sourceBrowser,
-    targetBrowser: options.targetBrowser,
-    dryRun: options.dryRun,
-  };
-}
+test("旧命令和重启参数不再兼容", () => {
+  assert.equal(fs.existsSync(path.join(__dirname, "bookmark-sync.cmd")), false);
+  assert.equal(fs.existsSync(path.join(__dirname, "bookmark-sync.js")), false);
+
+  const oldCommand = spawnSync(process.execPath, [path.join(__dirname, "bookmark-bridge.js"), "edge-to-chrome"], {
+    encoding: "utf8",
+  });
+  assert.notEqual(oldCommand.status, 0);
+  assert.match(oldCommand.stderr, /未知命令/);
+
+  const oldFlag = spawnSync(process.execPath, [
+    path.join(__dirname, "bookmark-bridge.js"),
+    "bookmarks-to-chrome",
+    "--restart-target",
+  ], { encoding: "utf8" });
+  assert.notEqual(oldFlag.status, 0);
+  assert.match(oldFlag.stderr, /未知选项/);
+});

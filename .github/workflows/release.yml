@@ -45,8 +45,8 @@ jobs:
           $stage = Join-Path $PWD "dist\$name"
           New-Item -ItemType Directory -Path $stage -Force | Out-Null
           $files = @(
-            'bookmark-sync.js', 'history-sync.js', 'password-migrate.js',
-            'bookmark-bridge.cmd', 'bookmark-sync.cmd',
+            'bookmark-bridge.js', 'history-sync.js', 'password-migrate.js',
+            'bookmark-bridge.cmd',
             'install.ps1', 'uninstall.ps1', 'README.md', 'LICENSE'
           )
           Copy-Item -LiteralPath $files -Destination $stage

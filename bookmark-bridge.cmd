@@ -1,4 +1,4 @@
 @echo off
 setlocal
-node --no-warnings "%~dp0bookmark-sync.js" %*
+node --no-warnings "%~dp0bookmark-bridge.js" %*
 exit /b %errorlevel%

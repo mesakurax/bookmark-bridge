@@ -12,7 +12,7 @@ foreach ($name in @('bookmark-bridge.cmd', 'bookmark-sync.cmd')) {
     $shim = Join-Path $BinDir $name
     if (Test-Path -LiteralPath $shim) {
         $content = Get-Content -LiteralPath $shim -Raw
-        if ($content -like '*BookmarkBridge*bookmark-sync.js*') {
+        if ($content -like '*BookmarkBridge*bookmark-bridge.js*' -or $content -like '*BookmarkBridge*bookmark-sync.js*') {
             Remove-Item -LiteralPath $shim -Force
         }
     }

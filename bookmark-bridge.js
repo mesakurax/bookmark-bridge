@@ -10,10 +10,17 @@ const { executeHistorySync } = require("./history-sync");
 const { migratePasswords } = require("./password-migrate");
 
 const APP_NAME = "Bookmark Bridge";
-const VERSION = "2.0.1";
+const VERSION = "2.1.0";
 const MANAGED_ROOTS = ["bookmark_bar", "other", "synced"];
-const DIRECTIONS = new Set(["chrome-to-edge", "edge-to-chrome"]);
-const BROWSERS = new Set(["chrome", "edge"]);
+const COMMANDS = new Map([
+  ["bookmarks-to-chrome", { action: "bookmarks", sourceBrowser: "edge", targetBrowser: "chrome" }],
+  ["bookmarks-to-edge", { action: "bookmarks", sourceBrowser: "chrome", targetBrowser: "edge" }],
+  ["passwords-to-chrome", { action: "passwords", sourceBrowser: "edge", targetBrowser: "chrome" }],
+  ["passwords-to-edge", { action: "passwords", sourceBrowser: "chrome", targetBrowser: "edge" }],
+  ["history", { action: "history", sourceBrowser: null, targetBrowser: null }],
+  ["all-to-chrome", { action: "all", sourceBrowser: "edge", targetBrowser: "chrome" }],
+  ["all-to-edge", { action: "all", sourceBrowser: "chrome", targetBrowser: "edge" }],
+]);
 
 function fail(message, exitCode = 1) {
   console.error(`错误：${message}`);
@@ -31,26 +38,19 @@ function usage() {
 不常驻后台，也不修改两款浏览器原有的云同步设置。
 
 用法：
-  bookmark-bridge status
-  bookmark-bridge bookmarks <源浏览器> <目标浏览器> [选项]
-  bookmark-bridge passwords <源浏览器> <目标浏览器>
-  bookmark-bridge history [选项]
-  bookmark-bridge all <源浏览器> <目标浏览器> [选项]
+  bookmark-bridge <命令> [选项]
 
-命令：
-  bookmarks           单向同步收藏夹；源端是本次修改的主导。
-  passwords           单向迁移密码。工具会打开正确页面并管理 CSV 中转；
-                      Windows Hello、导出和导入确认必须由你亲自完成。
-  history             无方向合并历史记录：Chrome 和 Edge 都变为 A+B。
-                      首次全量去重，以后利用本地基线只处理新增记录。
-  all                 完整同步：收藏夹、密码按给定方向同步，历史记录
-                      始终双向合并。all edge chrome 和 all chrome edge
-                      是两个完整同步命令。
-  status              查看配置文件、数据数量、运行状态和历史基线。
+7 个主要命令：
+  bookmarks-to-chrome 收藏夹 Edge -> Chrome
+  bookmarks-to-edge   收藏夹 Chrome -> Edge
+  passwords-to-chrome 密码 Edge -> Chrome
+  passwords-to-edge   密码 Chrome -> Edge
+  history             历史记录双向合并，双方都变成 A+B
+  all-to-chrome       收藏夹/密码 Edge -> Chrome，历史记录双向合并
+  all-to-edge         收藏夹/密码 Chrome -> Edge，历史记录双向合并
 
-浏览器名称：
-  chrome              Google Chrome
-  edge                Microsoft Edge
+辅助命令：
+  status              查看数据文件、项目数量、运行状态和历史基线
 
 选项：
   -h, --help          显示中文帮助。
@@ -61,10 +61,6 @@ function usage() {
   --mode mirror       精确镜像：让目标端标准收藏夹完全跟随源端，会删除
                       目标端独有项目。实际执行时必须同时使用 --yes。
   --yes               确认执行 mirror 模式的删除操作。
-  --restart-target    如果目标浏览器有可见窗口，自动关闭目标浏览器、同步，
-                      再重新打开。仅用于单独的 bookmarks 命令。
-  --restart-browsers  允许 history/all 关闭两款浏览器并在完成后重开原本
-                      有窗口的浏览器。未提交的表单文字可能丢失。
   --reset-history-baseline
                       忽略已有历史基线，重新做一次全量比较；不会清空历史。
   --chrome-profile X  指定 Chrome 配置目录，例如 "Default" 或 "Profile 1"。
@@ -78,56 +74,43 @@ function usage() {
   bookmark-bridge status
       查看当前状态。
 
-  bookmark-bridge bookmarks edge chrome --dry-run
+  bookmark-bridge bookmarks-to-chrome --dry-run
       预览收藏夹 Edge -> Chrome。
 
-  bookmark-bridge passwords chrome edge
+  bookmark-bridge passwords-to-edge
       把 Chrome 密码迁移到 Edge；安全确认由你点击。
 
-  bookmark-bridge history --restart-browsers
-      关闭两款浏览器，双向合并新增历史，然后重新打开。
+  bookmark-bridge history
+      自动重启两款浏览器，双向合并新增历史。
 
-  bookmark-bridge all edge chrome --restart-browsers
+  bookmark-bridge all-to-chrome
       收藏夹和密码 Edge -> Chrome，历史记录两边合并。
 
-  bookmark-bridge all chrome edge --restart-browsers
+  bookmark-bridge all-to-edge
       收藏夹和密码 Chrome -> Edge，历史记录两边合并。
 
-兼容旧命令：
-  bookmark-sync edge-to-chrome
-  bookmark-sync chrome-to-edge
-      仍然可用，等价于 bookmarks edge chrome / chrome edge。
-
 安全规则：
-  1. 收藏夹只写目标端；默认 merge 不删除目标端独有项目。
-  2. 历史记录同时写两边，因此执行时两款浏览器都必须退出。
-  3. 历史基线避免下一次重新处理旧记录；删除历史不会传播到另一边。
-  4. 密码明文只存在于浏览器导出的临时 CSV；工具不打印其内容，
+  1. 需要退出浏览器时，工具会自动关闭，并重开原本有窗口的浏览器。
+     浏览器未打开时不会额外打开；未提交的网页表单文字可能丢失。
+  2. 收藏夹只写目标端；默认 merge 不删除目标端独有项目。
+  3. 历史记录同时写两边，因此同步期间会自动退出两款浏览器。
+  4. 历史基线避免下一次重新处理旧记录；删除历史不会传播到另一边。
+  5. 密码明文只存在于浏览器导出的临时 CSV；工具不打印其内容，
      流程结束会删除中转文件。密码迁移不是无人值守操作。
-  5. 收藏夹和历史记录每次写入前都会创建带时间戳的原始备份。
+  6. 收藏夹和历史记录每次写入前都会创建带时间戳的原始备份。
 `);
 }
 
 function parseArgs(argv) {
-  let command = argv[0] || "help";
-  if (command === "--version" || command === "-v") command = "version";
-  let positionalsStart = 1;
-  let sourceBrowser = null;
-  let targetBrowser = null;
-
-  if (DIRECTIONS.has(command)) {
-    [sourceBrowser, targetBrowser] = command.split("-to-");
-    command = "bookmarks";
-  } else if (new Set(["bookmarks", "passwords", "all"]).has(command)) {
-    sourceBrowser = argv[1] || null;
-    targetBrowser = argv[2] || null;
-    positionalsStart = 3;
-  }
+  let requestedCommand = argv[0] || "help";
+  if (requestedCommand === "--version" || requestedCommand === "-v") requestedCommand = "version";
+  const definition = COMMANDS.get(requestedCommand) || null;
 
   const result = {
-    command,
-    sourceBrowser,
-    targetBrowser,
+    command: definition?.action || requestedCommand,
+    requestedCommand,
+    sourceBrowser: definition?.sourceBrowser || null,
+    targetBrowser: definition?.targetBrowser || null,
     mode: "merge",
     dryRun: false,
     yes: false,
@@ -136,17 +119,13 @@ function parseArgs(argv) {
     chromeStore: null,
     edgeStore: null,
     backupDir: null,
-    restartTarget: false,
-    restartBrowsers: false,
     resetHistoryBaseline: false,
   };
 
-  for (let index = positionalsStart; index < argv.length; index += 1) {
+  for (let index = 1; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--dry-run") result.dryRun = true;
     else if (arg === "--yes") result.yes = true;
-    else if (arg === "--restart-target") result.restartTarget = true;
-    else if (arg === "--restart-browsers") result.restartBrowsers = true;
     else if (arg === "--reset-history-baseline") result.resetHistoryBaseline = true;
     else if (arg === "--help" || arg === "-h") result.command = "help";
     else if (arg === "--mode") result.mode = requiredValue(argv, ++index, arg);
@@ -156,13 +135,6 @@ function parseArgs(argv) {
     else if (arg === "--edge-store") result.edgeStore = requiredValue(argv, ++index, arg);
     else if (arg === "--backup-dir") result.backupDir = requiredValue(argv, ++index, arg);
     else fail(`未知选项：${arg}。使用 bookmark-bridge -h 查看帮助。`);
-  }
-
-  if (new Set(["bookmarks", "passwords", "all"]).has(result.command)) {
-    if (!BROWSERS.has(result.sourceBrowser) || !BROWSERS.has(result.targetBrowser)) {
-      fail(`${result.command} 需要依次提供源浏览器和目标浏览器，只能使用 chrome 或 edge。`);
-    }
-    if (result.sourceBrowser === result.targetBrowser) fail("源浏览器和目标浏览器不能相同。");
   }
 
   if (!new Set(["merge", "mirror"]).has(result.mode)) {
@@ -559,17 +531,8 @@ function sleep(milliseconds) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
 }
 
-function stopTargetBrowser(browser, state, allowVisible) {
+function stopBrowser(browser, state) {
   if (state.processes.length === 0) return;
-  if (state.visible.length > 0 && !allowVisible) {
-    const titles = state.visible.map((item) => item.Title).filter(Boolean);
-    const detail = titles.length ? ` Open window: ${titles.join(" | ")}` : "";
-    const error = new Error(
-      `${capitalize(browser)} is the target and still has a visible window.${detail}\n` +
-      `Close only ${capitalize(browser)}, or rerun with --restart-target to close, sync, and reopen it automatically.`);
-    error.exitCode = 3;
-    throw error;
-  }
 
   const imageName = browser === "chrome" ? "chrome.exe" : "msedge.exe";
   if (state.visible.length === 0) {
@@ -722,10 +685,9 @@ function synchronize(options) {
     fail("mirror 会删除目标端独有收藏夹。请先使用 --dry-run 预览，再加 --yes 执行。", 2);
   }
   const targetState = browserProcessState(targetBrowser);
-  const allowRestart = options.restartTarget || options.restartBrowsers;
-  const shouldReopen = allowRestart && targetState.visible.length > 0;
+  const shouldReopen = targetState.visible.length > 0;
   const executable = shouldReopen ? browserExecutable(targetBrowser, targetState) : null;
-  stopTargetBrowser(targetBrowser, targetState, allowRestart);
+  stopBrowser(targetBrowser, targetState);
 
   try {
     // Closing the target may flush last-second bookmark changes. Re-read both
@@ -784,16 +746,6 @@ function withBrowsersStopped(options, callback) {
     chrome: browserProcessState("chrome"),
     edge: browserProcessState("edge"),
   };
-  const visible = Object.entries(states).filter(([, state]) => state.visible.length > 0).map(([browser]) => capitalize(browser));
-  if (visible.length > 0 && !options.restartBrowsers) {
-    const error = new Error(
-      `历史记录需要同时退出 Chrome 和 Edge。仍有可见窗口：${visible.join("、")}。\n` +
-      "请手动退出两款浏览器，或加 --restart-browsers 让工具关闭并重开。",
-    );
-    error.exitCode = 3;
-    throw error;
-  }
-
   const reopen = {};
   for (const browser of ["chrome", "edge"]) {
     reopen[browser] = states[browser].visible.length > 0
@@ -802,14 +754,12 @@ function withBrowsersStopped(options, callback) {
   }
 
   try {
-    stopTargetBrowser("chrome", states.chrome, options.restartBrowsers);
-    stopTargetBrowser("edge", states.edge, options.restartBrowsers);
+    stopBrowser("chrome", states.chrome);
+    stopBrowser("edge", states.edge);
     return callback();
   } finally {
-    if (options.restartBrowsers) {
-      for (const browser of ["chrome", "edge"]) {
-        if (reopen[browser]) reopenBrowser(browser, reopen[browser]);
-      }
+    for (const browser of ["chrome", "edge"]) {
+      if (reopen[browser]) reopenBrowser(browser, reopen[browser]);
     }
   }
 }
@@ -841,18 +791,9 @@ function synchronizeHistory(options) {
   });
 
   // History is frequently locked even for read-only access while Chromium is
-  // open. A dry run never closes apps unless the user explicitly opted in.
+  // open, so both browsers are automatically restarted even for a preview.
   const anyRunning = runningBrowsers().length > 0;
-  let result;
-  if (anyRunning && options.dryRun && !options.restartBrowsers) {
-    const error = new Error(
-      "两款浏览器仍在运行，无法可靠预览被锁定的 History 数据库。" +
-      "请手动退出后重试，或加 --restart-browsers。",
-    );
-    error.exitCode = 3;
-    throw error;
-  }
-  result = anyRunning || !options.dryRun ? withBrowsersStopped(options, run) : run();
+  const result = anyRunning || !options.dryRun ? withBrowsersStopped(options, run) : run();
   reportHistoryResult(result);
   return result;
 }
@@ -860,14 +801,6 @@ function synchronizeHistory(options) {
 async function synchronizeAll(options) {
   info(`完整同步：${capitalize(options.sourceBrowser)} -> ${capitalize(options.targetBrowser)}`);
   info("  收藏夹/密码按箭头方向；历史记录始终双向合并。\n");
-  if (!options.dryRun && !options.restartBrowsers) {
-    const error = new Error(
-      "完整同步最后需要关闭两款浏览器来写入历史记录。" +
-      "请加 --restart-browsers，或分别运行单项命令。",
-    );
-    error.exitCode = 3;
-    throw error;
-  }
   synchronize(options);
   await migratePasswords(options);
   // History runs last so that no database or bookmark write races with the
